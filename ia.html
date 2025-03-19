@@ -1,0 +1,609 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Attrapeur d'Étoiles avec ml5.js HandPose</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/p5.js/1.4.0/p5.min.js"></script>
+  <script src="https://unpkg.com/ml5@latest/dist/ml5.min.js"></script>
+  <style>
+    body {
+      font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+      margin: 0;
+      padding: 20px;
+      text-align: center;
+      background-color: #f0f5ff;
+      color: #333;
+    }
+    .container {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      max-width: 1200px;
+      margin: 0 auto;
+    }
+    .game-interface {
+      display: flex;
+      justify-content: space-between;
+      width: 100%;
+      margin-top: 10px;
+    }
+    .game-info {
+      display: flex;
+      justify-content: space-between;
+      width: 100%;
+      padding: 10px;
+      background-color: #fff;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      margin-bottom: 20px;
+    }
+    #score, #lives {
+      font-size: 18px;
+      font-weight: bold;
+    }
+    #hand-data {
+      padding: 10px;
+      background-color: #f8f9fa;
+      border-radius: 5px;
+      font-size: 14px;
+      text-align: left;
+      margin-top: 20px;
+      width: 100%;
+    }
+    #status {
+      padding: 8px 12px;
+      background-color: #e9ecef;
+      border-radius: 5px;
+      font-weight: 500;
+      margin-top: 10px;
+      width: 100%;
+    }
+    .instructions {
+      margin-top: 20px;
+      padding: 15px;
+      background-color: #fff;
+      border-radius: 8px;
+      box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+      text-align: left;
+      width: 100%;
+    }
+    .instructions h3 {
+      margin-top: 0;
+      color: #2c3e50;
+    }
+    .instruction-grid {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 10px;
+      margin-top: 10px;
+    }
+    .instruction-item {
+      display: flex;
+      align-items: center;
+      padding: 8px;
+      background-color: #f8f9fa;
+      border-radius: 5px;
+    }
+    .instruction-icon {
+      width: 40px;
+      height: 40px;
+      background-color: #3498db;
+      border-radius: 5px;
+      margin-right: 10px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: white;
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>Attrapeur d'Étoiles avec ml5.js HandPose</h1>
+    
+    <div class="game-info">
+      <div id="score">Score: 0</div>
+      <div id="lives">Vies: 3</div>
+    </div>
+    
+    <div id="canvas-container"></div>
+    
+    <div id="status">Chargement du modèle HandPose...</div>
+    <div id="hand-data">Détection de main en cours...</div>
+    
+    <div class="instructions">
+      <h3>Instructions:</h3>
+      <div class="instruction-grid">
+        <div class="instruction-item">
+          <div class="instruction-icon">←</div>
+          <div>Main à gauche : Déplacer à gauche</div>
+        </div>
+        <div class="instruction-item">
+          <div class="instruction-icon">→</div>
+          <div>Main à droite : Déplacer à droite</div>
+        </div>
+        <div class="instruction-item">
+          <div class="instruction-icon">👆</div>
+          <div>Pointez avec un doigt : Sauter</div>
+        </div>
+        <div class="instruction-item">
+          <div class="instruction-icon">✊</div>
+          <div>Fermez le poing : Tirer</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Variables pour ml5.js HandPose
+    let handPose;
+    let video;
+    let hands = [];
+    
+    // Variables du jeu
+    let player;
+    let stars = [];
+    let bullets = [];
+    let score = 0;
+    let lives = 3;
+    let lastGesture = "";
+    let isJumping = false;
+    let jumpHeight = 0;
+    let handX = 0;
+    let handY = 0;
+    let fingerCount = 0;
+    let isPalmOpen = false;
+    let isFist = false;
+    
+    // Préchargement des ressources
+    function preload() {
+      // Charger le modèle HandPose
+      handPose = ml5.handPose();
+    }
+    
+    // Configuration initiale
+    function setup() {
+      // Créer le canvas et l'ajouter au conteneur
+      let canvas = createCanvas(640, 480);
+      canvas.parent('canvas-container');
+      
+      // Créer la capture vidéo
+      video = createCapture(VIDEO);
+      video.size(640, 480);
+      video.hide();
+      
+      // Démarrer la détection des mains
+      handPose.detectStart(video, gotHands);
+      
+      // Initialiser le joueur
+      player = {
+        x: width / 2 - 25,
+        y: height - 60,
+        baseY: height - 60,
+        width: 50,
+        height: 50,
+        speed: 5,
+        color: "#3498db",
+        
+        moveLeft: function() {
+          if (this.x > 0) {
+            this.x -= this.speed;
+          }
+        },
+        
+        moveRight: function() {
+          if (this.x < width - this.width) {
+            this.x += this.speed;
+          }
+        },
+        
+        jump: function() {
+          if (isJumping) {
+            if (jumpHeight < 60) {
+              this.y -= 5;
+              jumpHeight += 5;
+            } else {
+              this.y += 5;
+              if (this.y >= this.baseY) {
+                this.y = this.baseY;
+                isJumping = false;
+                jumpHeight = 0;
+              }
+            }
+          }
+        }
+      };
+      
+      // Créer des étoiles initiales
+      for (let i = 0; i < 5; i++) {
+        createStar();
+      }
+      
+      // Mettre à jour le statut
+      document.getElementById('status').innerText = "Modèle HandPose chargé - Montrez votre main";
+    }
+    
+    // Boucle principale de dessin
+    function draw() {
+      // Dessiner la vidéo
+      image(video, 0, 0, width, height);
+      
+      // Effets de transparence pour le jeu
+      fill(0, 0, 0, 100);
+      rect(0, 0, width, height);
+      
+      // Analyser les gestes de la main
+      if (hands.length > 0) {
+        updateHandGestures(hands[0]);
+        drawHandLandmarks();
+      }
+      
+      // Gérer le saut du joueur
+      player.jump();
+      
+      // Dessiner le joueur
+      drawPlayer();
+      
+      // Mettre à jour et dessiner les étoiles
+      updateStars();
+      
+      // Mettre à jour et dessiner les balles
+      updateBullets();
+      
+      // Vérifier les collisions
+      checkCollisions();
+      
+      // Mettre à jour l'affichage du score et des vies
+      document.getElementById("score").innerText = "Score: " + score;
+      document.getElementById("lives").innerText = "Vies: " + lives;
+      
+      // Vérifier la fin de partie
+      if (lives <= 0) {
+        gameOver();
+      }
+    }
+    
+    // Callback pour les résultats de la détection de mains
+    function gotHands(results) {
+      hands = results;
+    }
+    
+    // Interpréter les gestes de la main
+    function updateHandGestures(hand) {
+      // Extraire les points-clés
+      const keypoints = hand.keypoints;
+      const palmBase = keypoints[0]; // Base de la paume
+      
+      // Calculer la position de la main
+      handX = palmBase.x;
+      handY = palmBase.y;
+      
+      // Regrouper les points par doigt pour l'analyse
+      const thumbPoints = keypoints.slice(1, 5);
+      const indexPoints = keypoints.slice(5, 9);
+      const middlePoints = keypoints.slice(9, 13);
+      const ringPoints = keypoints.slice(13, 17);
+      const pinkyPoints = keypoints.slice(17, 21);
+      
+      // Déterminer si les doigts sont étendus
+      const thumbExtended = isFingerExtended(thumbPoints);
+      const indexExtended = isFingerExtended(indexPoints);
+      const middleExtended = isFingerExtended(middlePoints);
+      const ringExtended = isFingerExtended(ringPoints);
+      const pinkyExtended = isFingerExtended(pinkyPoints);
+      
+      // Compter les doigts étendus
+      fingerCount = (thumbExtended ? 1 : 0) + 
+                   (indexExtended ? 1 : 0) + 
+                   (middleExtended ? 1 : 0) + 
+                   (ringExtended ? 1 : 0) + 
+                   (pinkyExtended ? 1 : 0);
+      
+      // Déterminer les gestes
+      isPalmOpen = fingerCount >= 4;
+      isFist = fingerCount <= 1;
+      
+      // Contrôler le jeu en fonction des gestes
+      const normalizedX = handX / width; // De 0 à 1
+      
+      if (normalizedX < 0.4) {
+        player.moveLeft();
+        document.getElementById('status').innerText = "Main à gauche";
+      } else if (normalizedX > 0.6) {
+        player.moveRight();
+        document.getElementById('status').innerText = "Main à droite";
+      }
+      
+      // Geste pour sauter (pointer avec l'index uniquement)
+      if (fingerCount === 1 && indexExtended && !thumbExtended && !middleExtended && !ringExtended && !pinkyExtended) {
+        if (!isJumping) {
+          isJumping = true;
+        }
+        document.getElementById('status').innerText = "Saut (index pointé)";
+      }
+      
+      // Geste pour tirer (poing fermé)
+      if (isFist && lastGesture !== "shoot") {
+        shootBullet();
+        lastGesture = "shoot";
+        document.getElementById('status').innerText = "Tir (poing fermé)";
+      } else if (!isFist) {
+        lastGesture = "";
+      }
+      
+      // Afficher les données de la main
+      document.getElementById('hand-data').innerHTML = `
+        Position: X=${Math.round(handX)}, Y=${Math.round(handY)}<br>
+        Doigts levés: ${fingerCount}<br>
+        Geste: ${isPalmOpen ? "Main ouverte" : isFist ? "Poing fermé" : "Autre"}
+      `;
+    }
+    
+    // Fonction pour déterminer si un doigt est étendu
+    function isFingerExtended(fingerPoints) {
+      if (fingerPoints.length < 2) return false;
+      
+      const tipPos = fingerPoints[fingerPoints.length - 1]; // Bout du doigt
+      const basePos = fingerPoints[0]; // Base du doigt
+      
+      // Si le bout du doigt est considérablement plus haut que la base, le doigt est étendu
+      const verticalDiff = basePos.y - tipPos.y;
+      return verticalDiff > 40;
+    }
+    
+    // Dessiner les repères de la main
+    function drawHandLandmarks() {
+      if (hands.length > 0) {
+        const hand = hands[0];
+        
+        // Dessiner les points
+        for (let i = 0; i < hand.keypoints.length; i++) {
+          const keypoint = hand.keypoints[i];
+          fill(0, 255, 0);
+          noStroke();
+          circle(keypoint.x, keypoint.y, 8);
+        }
+        
+        // Dessiner les connexions (lignes entre les points)
+        stroke(255, 0, 0);
+        strokeWeight(2);
+        
+        // Connexions pour le pouce (points 1-4)
+        for (let i = 1; i < 4; i++) {
+          line(
+            hand.keypoints[i].x, hand.keypoints[i].y,
+            hand.keypoints[i+1].x, hand.keypoints[i+1].y
+          );
+        }
+        
+        // Connexions pour l'index (points 5-8)
+        for (let i = 5; i < 8; i++) {
+          line(
+            hand.keypoints[i].x, hand.keypoints[i].y,
+            hand.keypoints[i+1].x, hand.keypoints[i+1].y
+          );
+        }
+        
+        // Connexions pour le majeur (points 9-12)
+        for (let i = 9; i < 12; i++) {
+          line(
+            hand.keypoints[i].x, hand.keypoints[i].y,
+            hand.keypoints[i+1].x, hand.keypoints[i+1].y
+          );
+        }
+        
+        // Connexions pour l'annulaire (points 13-16)
+        for (let i = 13; i < 16; i++) {
+          line(
+            hand.keypoints[i].x, hand.keypoints[i].y,
+            hand.keypoints[i+1].x, hand.keypoints[i+1].y
+          );
+        }
+        
+        // Connexions pour l'auriculaire (points 17-20)
+        for (let i = 17; i < 20; i++) {
+          line(
+            hand.keypoints[i].x, hand.keypoints[i].y,
+            hand.keypoints[i+1].x, hand.keypoints[i+1].y
+          );
+        }
+        
+        // Connexions pour la paume
+        line(hand.keypoints[0].x, hand.keypoints[0].y, hand.keypoints[5].x, hand.keypoints[5].y);
+        line(hand.keypoints[0].x, hand.keypoints[0].y, hand.keypoints[17].x, hand.keypoints[17].y);
+        line(hand.keypoints[5].x, hand.keypoints[5].y, hand.keypoints[9].x, hand.keypoints[9].y);
+        line(hand.keypoints[9].x, hand.keypoints[9].y, hand.keypoints[13].x, hand.keypoints[13].y);
+        line(hand.keypoints[13].x, hand.keypoints[13].y, hand.keypoints[17].x, hand.keypoints[17].y);
+      }
+    }
+    
+    // Dessiner le joueur
+    function drawPlayer() {
+      fill(player.color);
+      rect(player.x, player.y, player.width, player.height);
+      
+      // Dessiner un visage simple
+      fill(255);
+      rect(player.x + 10, player.y + 15, 10, 10); // Œil gauche
+      rect(player.x + 30, player.y + 15, 10, 10); // Œil droit
+      
+      // Dessiner une bouche en fonction de l'action
+      noFill();
+      stroke(0);
+      strokeWeight(2);
+      if (lastGesture === "shoot") {
+        // Bouche ronde pour tirer
+        arc(player.x + 25, player.y + 35, 16, 16, 0, PI);
+      } else if (isJumping) {
+        // Bouche surprise pour sauter
+        circle(player.x + 25, player.y + 35, 16);
+      } else {
+        // Bouche souriante par défaut
+        arc(player.x + 25, player.y + 35, 16, 16, 0, PI);
+      }
+      
+      noStroke();
+    }
+    
+    // Créer une nouvelle étoile
+    function createStar() {
+      const size = random(20, 40);
+      const star = {
+        x: random(width - size),
+        y: -size,
+        size: size,
+        speed: random(0.3),
+        color: getRandomColor(),
+        points: floor(size / 5)
+      };
+      stars.push(star);
+    }
+    
+    // Tirer une balle
+    function shootBullet() {
+      const bullet = {
+        x: player.x + player.width / 2 - 5,
+        y: player.y,
+        width: 10,
+        height: 20,
+        speed: 8,
+        color: "#e74c3c"
+      };
+      bullets.push(bullet);
+    }
+    
+    // Générer une couleur aléatoire
+    function getRandomColor() {
+      const colors = ["#f1c40f", "#e67e22", "#e74c3c", "#9b59b6", "#3498db", "#2ecc71"];
+      return colors[floor(random(colors.length))];
+    }
+    
+    // Mettre à jour les étoiles
+    function updateStars() {
+      for (let i = stars.length - 1; i >= 0; i--) {
+        const star = stars[i];
+        
+        // Déplacer l'étoile vers le bas
+        star.y += star.speed;
+        
+        // Dessiner l'étoile
+        drawStar(star.x + star.size/2, star.y + star.size/2, 5, star.size/2, star.size/4, star.color);
+        
+        // Si l'étoile sort de l'écran, la supprimer et perdre une vie
+        if (star.y > height) {
+          stars.splice(i, 1);
+          lives--;
+          createStar();
+        }
+      }
+      
+      // Ajouter périodiquement de nouvelles étoiles
+      if (random() < 0.02) {
+        createStar();
+      }
+    }
+    
+    // Dessiner une étoile
+    function drawStar(cx, cy, spikes, outerRadius, innerRadius, color) {
+      let rot = PI / 2 * 3;
+      let x = cx;
+      let y = cy;
+      let step = PI / spikes;
+      
+      fill(color);
+      beginShape();
+      for (let i = 0; i < spikes; i++) {
+        x = cx + cos(rot) * outerRadius;
+        y = cy + sin(rot) * outerRadius;
+        vertex(x, y);
+        rot += step;
+        
+        x = cx + cos(rot) * innerRadius;
+        y = cy + sin(rot) * innerRadius;
+        vertex(x, y);
+        rot += step;
+      }
+      endShape(CLOSE);
+    }
+    
+    // Mettre à jour les balles
+    function updateBullets() {
+      for (let i = bullets.length - 1; i >= 0; i--) {
+        const bullet = bullets[i];
+        
+        // Déplacer la balle vers le haut
+        bullet.y -= bullet.speed;
+        
+        // Dessiner la balle
+        fill(bullet.color);
+        rect(bullet.x, bullet.y, bullet.width, bullet.height);
+        
+        // Si la balle sort de l'écran, la supprimer
+        if (bullet.y < 0) {
+          bullets.splice(i, 1);
+        }
+      }
+    }
+    
+    // Vérifier les collisions
+    function checkCollisions() {
+      // Vérifier les collisions entre le joueur et les étoiles
+      for (let i = stars.length - 1; i >= 0; i--) {
+        const star = stars[i];
+        
+        if (player.x < star.x + star.size &&
+            player.x + player.width > star.x &&
+            player.y < star.y + star.size &&
+            player.y + player.height > star.y) {
+          
+          // Collision détectée, ajouter des points et supprimer l'étoile
+          score += star.points;
+          stars.splice(i, 1);
+          createStar();
+        }
+      }
+      
+      // Vérifier les collisions entre les balles et les étoiles
+      for (let i = bullets.length - 1; i >= 0; i--) {
+        const bullet = bullets[i];
+        
+        for (let j = stars.length - 1; j >= 0; j--) {
+          const star = stars[j];
+          
+          if (bullet.x < star.x + star.size &&
+              bullet.x + bullet.width > star.x &&
+              bullet.y < star.y + star.size &&
+              bullet.y + bullet.height > star.y) {
+            
+            // Collision détectée, ajouter des points et supprimer l'étoile et la balle
+            score += Math.floor(star.points * 1.5); // Bonus pour tir
+            stars.splice(j, 1);
+            bullets.splice(i, 1);
+            createStar();
+            break;
+          }
+        }
+      }
+    }
+    
+    // Afficher l'écran de fin de jeu
+    function gameOver() {
+      fill(0, 0, 0, 200);
+      rect(0, 0, width, height);
+      
+      fill(255);
+      textSize(48);
+      textAlign(CENTER, CENTER);
+      text("Game Over", width / 2, height / 2);
+      
+      textSize(24);
+      text("Score final: " + score, width / 2, height / 2 + 50);
+      text("Rafraîchissez la page pour rejouer", width / 2, height / 2 + 100);
+      
+      noLoop(); // Arrêter la boucle draw()
+    }
+  </script>
+</body>
+</html>
